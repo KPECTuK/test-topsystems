@@ -1,0 +1,112 @@
+-- test
+
+DECLARE @source INT
+DECLARE @dest INT
+
+SELECT @source = COUNT(*) FROM TESTS_SOURCE.dbo.AccessGroups
+SELECT @dest = COUNT(*) FROM TESTS_DEST.dbo.AccessGroups
+
+SELECT
+  'AccessGroup' AS Name
+, IIF ( COUNT(*) = @source, 'probably correct', 'probably incorrect' ) AS Message
+, COUNT(*) AS Intersection
+, @source AS SourceCount
+, @dest AS DestCount
+FROM (
+  SELECT 
+    -- [PK]
+    [Guid]
+  , [Name]
+  , [TypeID]
+  , [Temporary]
+  , [SystemType]
+  FROM TESTS_SOURCE.dbo.AccessGroups
+  INTERSECT
+  SELECT
+    -- [PK]
+    [Guid]
+  , [Name]
+  , [TypeID]
+  , [Temporary]
+  , [SystemType]
+  FROM TESTS_DEST.dbo.AccessGroups ) AS c
+
+SELECT @source = COUNT(*) FROM TESTS_SOURCE.dbo.Objects
+SELECT @dest = COUNT(*) FROM TESTS_DEST.dbo.Objects
+
+SELECT
+  'Objects' AS Name
+, IIF ( COUNT(*) = @source, 'probably correct', 'probably incorrect' ) AS Message
+, COUNT(*) AS Intersection
+, @source AS SourceCount
+, @dest AS DestCount
+FROM (
+  SELECT
+    [PK]
+  , [ObjectID]
+  -- , [AccessGroupID]
+  , [Name]
+  , [Guid]
+  FROM TESTS_SOURCE.dbo.Objects
+  INTERSECT
+  SELECT
+    [PK]
+  , [ObjectID]
+  -- , [AccessGroupID]
+  , [Name]
+  , [Guid]
+  FROM TESTS_DEST.dbo.Objects ) AS c
+
+SELECT @source = COUNT(*) FROM TESTS_SOURCE.dbo.AccessGroupCommands
+SELECT @dest = COUNT(*) FROM TESTS_DEST.dbo.AccessGroupCommands
+
+SELECT
+  'AccessGroupCommands' AS Name
+, IIF ( COUNT(*) = @source, 'probably correct', 'probably incorrect' ) AS Message
+, COUNT(*) AS Intersection
+, @source AS SourceCount
+, @dest AS DestCount
+FROM (
+  SELECT
+    [CommandID]
+  -- , [GroupID]
+  , [Enable]
+  FROM TESTS_SOURCE.dbo.AccessGroupCommands
+  INTERSECT
+  SELECT
+    [CommandID]
+  -- , [GroupID]
+  , [Enable]
+  FROM TESTS_DEST.dbo.AccessGroupCommands ) AS c
+
+SELECT DISTINCT * FROM (
+  SELECT
+    [CommandID]
+  -- , [GroupID]
+  , [Enable]
+  FROM TESTS_DEST.dbo.AccessGroupCommands ) AS c
+
+SELECT DISTINCT * FROM (
+  SELECT
+    [CommandID]
+  -- , [GroupID]
+  , [Enable]
+  FROM TESTS_DEST.dbo.AccessGroupCommands ) AS c
+
+-- SELECT * FROM TESTS_SOURCE.dbo.AccessGroupCommands AS agc ORDER BY agc.GroupID
+-- SELECT * FROM TESTS_DEST.dbo.AccessGroupCommands AS agc ORDER BY agc.GroupID
+
+-- SELECT
+--   s.COLUMN_NAME
+-- -- , s.ORDINAL_POSITION
+-- , s.DATA_TYPE
+-- , s.COLUMN_DEFAULT
+-- , c.CONSTRAINT_NAME
+-- -- , OBJECT_DEFINITION ( OBJECT_ID ( c.CONSTRAINT_NAME ) )
+-- , cc.*
+-- FROM TESTS_DEST.INFORMATION_SCHEMA.COLUMNS AS s
+-- LEFT JOIN TESTS_DEST.INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE AS c
+-- ON c.COLUMN_NAME = s.COLUMN_NAME AND c.TABLE_NAME = 'AccessGroups'
+-- LEFT JOIN TESTS_DEST.INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc
+-- ON cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
+-- WHERE s.TABLE_NAME = 'AccessGroups'

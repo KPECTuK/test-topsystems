@@ -1,0 +1,162 @@
+-- задача 1
+
+-- assume: target db is appropriately done
+-- otherwise: simplest way to fix identities is to rebuild db correctly
+-- fill the data, using commutative nature of TESTS_SOURCE.dbo.AccessGroups
+
+BEGIN TRY
+
+  SET NOCOUNT ON
+
+  BEGIN TRANSACTION
+
+  DECLARE @ag_pk_dest INT
+  DECLARE @ag_pk_source INT
+  DECLARE @ag_guid UNIQUEIDENTIFIER
+  DECLARE @ag_name NVARCHAR(255)
+  DECLARE @ag_typeId INt
+  DECLARE @ag_temp INT
+  DECLARE @ag_systemType INT
+
+  DECLARE @o TABLE (
+    [PK] INT
+  , [ObjectID] INT
+  , [AccessGroupID] INT
+  , [Name] NVARCHAR(255)
+  , [Guid] UNIQUEIDENTIFIER )
+
+  INSERT INTO @o
+  SELECT *
+  FROM TESTS_SOURCE.dbo.Objects AS c
+
+  DECLARE @agc TABLE (
+    [CommandID] INT
+  , [GroupID] INT
+  , [Enable] INT )
+
+  INSERT INTO @agc
+  SELECT *
+  FROM TESTS_SOURCE.dbo.AccessGroupCommands AS c
+
+  DECLARE cxAccessGroups CURSOR FOR
+  SELECT
+    ag.PK
+  , ag.Guid
+  , ag.Name
+  , ag.TypeID
+  , ag.Temporary
+  , ag.SystemType
+  FROM TESTS_SOURCE.dbo.AccessGroups as ag
+
+  OPEN cxAccessGroups
+
+  FETCH NEXT FROM cxAccessGroups
+  INTO 
+    @ag_pk_source
+  , @ag_guid
+  , @ag_name
+  , @ag_typeId
+  , @ag_temp
+  , @ag_systemType
+
+  SET IDENTITY_INSERT TESTS_DEST.dbo.Objects ON
+
+  WHILE @@FETCH_STATUS = 0
+  BEGIN
+
+    INSERT INTO TESTS_DEST.dbo.AccessGroups
+    VALUES (
+      @ag_guid
+    , @ag_name
+    , @ag_typeId
+    , @ag_temp
+    , @ag_systemType )
+
+    SET @ag_pk_dest = SCOPE_IDENTITY()
+
+    INSERT INTO TESTS_DEST.dbo.AccessGroupCommands
+    SELECT 
+      agc.CommandID
+    , @ag_pk_dest
+    , agc.[Enable]
+    FROM @agc AS agc
+    WHERE agc.GroupID = @ag_pk_source
+
+    DELETE FROM @agc WHERE GroupID = @ag_pk_source
+
+    INSERT TESTS_DEST.dbo.Objects (
+      [PK]
+    , [ObjectID]
+    , [AccessGroupID]
+    , [Name]
+    , [Guid] )
+    SELECT 
+      o.PK
+    , o.ObjectID
+    , @ag_pk_dest
+    , o.Name
+    , o.Guid
+    FROM @o AS o
+    WHERE o.AccessGroupID = @ag_pk_source
+
+    DELETE FROM @o WHERE AccessGroupID = @ag_pk_source
+
+    FETCH NEXT FROM cxAccessGroups
+    INTO 
+      @ag_pk_source
+    , @ag_guid
+    , @ag_name
+    , @ag_typeId
+    , @ag_temp
+    , @ag_systemType
+  END
+
+    INSERT INTO TESTS_DEST.dbo.AccessGroupCommands
+    SELECT 
+      agc.CommandID
+    , agc.GroupID
+    , agc.[Enable]
+    FROM @agc AS agc
+    WHERE agc.GroupID = @ag_pk_source
+
+  INSERT TESTS_DEST.dbo.Objects (
+    [PK]
+  , [ObjectID]
+  , [AccessGroupID]
+  , [Name]
+  , [Guid] )
+  SELECT 
+    o.PK
+  , o.ObjectID
+  , o.AccessGroupID
+  , o.Name
+  , o.Guid
+  FROM @o AS o
+
+  SET IDENTITY_INSERT TESTS_DEST.dbo.Objects OFF
+
+  COMMIT TRANSACTION
+
+END TRY
+BEGIN CATCH
+  DECLARE @error_severity INT = ERROR_SEVERITY()
+  DECLARE @error_state INT = ERROR_STATE()
+  DECLARE @error_message NVARCHAR(4000) = ERROR_MESSAGE()
+
+  ROLLBACK TRANSACTION
+
+  RAISERROR (
+    '%s [%s]',
+    @error_severity,
+    @error_state,
+    @error_message )
+  -- WITH LOG
+END CATCH
+
+IF CURSOR_STATUS('global','cxAccessGroups') >= -1
+BEGIN
+  CLOSE cxAccessGroups
+  DEALLOCATE cxAccessGroups
+END
+
+GO

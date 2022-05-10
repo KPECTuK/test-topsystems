@@ -1,0 +1,203 @@
+-- задача 2
+
+-- assume: no duplicates in persistent groups
+
+DECLARE @idTemporal TABLE ( id INT )
+
+INSERT @idTemporal ( id )
+SELECT DISTINCT g.PK
+FROM TESTS_DEST.dbo.AccessGroups as g
+WHERE g.[Temporary] <> 0
+
+SELECT COUNT ( 1 ) AS GroupsTemporal FROM @idTemporal
+
+DECLARE @idPresistent TABLE ( id INT )
+
+INSERT @idPresistent ( id )
+SELECT DISTINCT g.PK
+FROM TESTS_DEST.dbo.AccessGroups AS g
+WHERE g.[Temporary] = 0
+
+SELECT COUNT ( 1 ) AS GroupsPersistant FROM @idPresistent
+
+DECLARE @idCommands TABLE ( id INT )
+
+INSERT @idCommands ( id )
+SELECT DISTINCT s.CommandID
+FROM TESTS_DEST.dbo.AccessGroupCommands as s
+
+SELECT COUNT ( 1 ) AS UniqueCommandsTotal FROM @idCommands
+
+-- match cache
+DECLARE @match TABLE (
+  idGroupTemporal INT
+, idGroupPersist INT
+, isSame INT )
+
+DECLARE @currentGroup TABLE (
+  idCommand INT
+, isEnable INT )
+
+DECLARE @comparandGroup TABLE (
+  idCommand INT
+, isEnable INT )
+
+DECLARE @result TABLE (
+  idCommand INT
+, isEnable INT )
+
+DECLARE @idGroupCurrent INT
+DECLARE @idGroupSlide INT
+
+-- cursor cxTemporal
+  DECLARE cxTemporal CURSOR FOR
+  SELECT id FROM @idTemporal
+
+  OPEN cxTemporal
+
+  FETCH NEXT FROM cxTemporal
+  INTO @idGroupCurrent
+--
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+
+  -- full complement of original
+    DELETE @currentGroup
+
+    INSERT @currentGroup
+    SELECT
+      i.id
+    , IIF ( c.[Enable] IS NOT NULL AND c.[Enable] <> 0, 1, NULL ) AS isEnabled
+    FROM @idCommands as i
+    -- FROM ( SELECT DISTINCT s.CommandID as id FROM TESTS_DEST.dbo.AccessGroupCommands as s ) AS i
+    LEFT JOIN TESTS_DEST.dbo.AccessGroupCommands AS c
+    ON c.GroupID = @idGroupCurrent AND i.id = c.CommandID
+    -- ON c.GroupID = 1400 AND i.id = c.CommandID
+    ORDER BY i.id
+  --
+
+  -- cursor cxPersistent
+    DECLARE cxPersistent CURSOR FOR
+    SELECT s.id
+    FROM @idPresistent as s
+
+    OPEN cxPersistent
+
+    FETCH NEXT FROM cxPersistent
+    INTO @idGroupSlide
+  --
+
+  WHILE @@FETCH_STATUS = 0
+  BEGIN
+
+    -- full complement of comparand
+      DELETE @comparandGroup
+
+      INSERT @comparandGroup
+      SELECT
+        i.id
+      , IIF ( c.[Enable] IS NOT NULL AND c.[Enable] <> 0, 1, NULL ) AS isEnabled
+      FROM @idCommands as i
+      LEFT JOIN TESTS_DEST.dbo.AccessGroupCommands AS c
+      ON c.GroupID = @idGroupSlide AND i.id = c.CommandID
+      ORDER BY i.id
+    --
+
+    -- check equality: 
+    --  - both have the same number of records
+    --  - both have identified uniquely by CommandID
+    --  - all have full number of command records (empty inclusive: 1650)
+
+    DELETE @result
+
+    INSERT @result
+    SELECT idCommand, isEnable
+    FROM @currentGroup
+    EXCEPT
+    SELECT idCommand, isEnable
+    FROM @comparandGroup
+    ORDER BY idCommand
+
+    -- append equals: zeroes will be equivalent, rest will differ as @result reflects
+
+    INSERT @match
+    VALUES (
+      @idGroupCurrent
+    , @idGroupSlide
+    , ( SELECT COUNT ( * ) FROM @result ) )
+
+    FETCH NEXT FROM cxPersistent
+    INTO @idGroupSlide
+
+  END
+
+  CLOSE cxPersistent
+  DEALLOCATE cxPersistent
+
+  FETCH NEXT FROM cxTemporal
+  INTO @idGroupCurrent
+END
+
+CLOSE cxTemporal
+DEALLOCATE cxTemporal
+
+--! test
+  SELECT * FROM @match AS s WHERE s.isSame = 0
+--
+
+-- update objects: keep all the objects
+UPDATE TESTS_DEST.dbo.Objects
+SET
+  AccessGroupID = s.idGroupPersist
+FROM TESTS_DEST.dbo.Objects AS d
+JOIN @match as s
+ON d.AccessGroupID = s.idGroupTemporal
+WHERE s.isSame = 0
+
+-- drop commands unused
+DELETE TESTS_DEST.dbo.AccessGroupCommands
+WHERE GroupID IN (
+  SELECT i.idGroupTemporal
+  FROM @match as i
+  WHERE i.isSame = 0 )
+
+-- drop groups unused
+DELETE TESTS_DEST.dbo.AccessGroups
+WHERE PK IN (
+  SELECT s.idGroupTemporal
+  FROM @match as s
+  WHERE s.isSame = 0 )
+
+-- update temporal groups
+UPDATE TESTS_DEST.dbo.AccessGroups
+SET
+  [Name] = IIF ( [Name] IS NULL OR [Name] = '', 'AccessGroup_' + CAST ( PK AS NVARCHAR(255) ), [Name] )
+, [Temporary] = 0
+
+--! test
+  SELECT * FROM TESTS_DEST.dbo.AccessGroups
+
+  SELECT * FROM TESTS_DEST.dbo.AccessGroups as s WHERE s.PK IN (
+    SELECT s.idGroupTemporal
+    FROM @match as s
+    WHERE s.isSame = 0 )
+
+  SELECT * FROM TESTS_DEST.dbo.Objects as s 
+  WHERE s.AccessGroupID IN (
+    SELECT s.idGroupTemporal
+    FROM @match as s
+    WHERE s.isSame = 0 )
+--
+
+GO
+
+-- дальше по русски, потому что вроде бы проверяющие русскоязычные.. замечания по выполнению:
+-- - от курсоров вродебы можно избавится, собрав все возможные комбинации групп с суммами разниц как в @match сейчас
+--   но не известно, что будет эффективнее: использовать курсоры или по здоровенной таблице елозить
+--   кроме того для курсоров - таблицы временные, а значит изменения, которые на них повлияют,
+--   будут связаны с добавлением записей и будут устранены при повторном запуске процедуры
+-- - на первый взгляд вроде бы работает, но чтобы проверить нужно писать тесты, а в задании вроде бы не указано, по этому не обязательно
+--   идея изложена, понять ее тут можно
+-- - как процедуру не оформлял, хотя наверное нужно было бы сделать что-то вроде транзакции, как в первой задаче, но опять таки: 
+--   идея есть, о транзакции упомянуто, пример в предыдущей задаче дан, по этому тут делать не буду
